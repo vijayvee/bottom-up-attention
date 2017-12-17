@@ -11,10 +11,11 @@ from fast_rcnn.nms_wrapper import nms
 
 
 import matplotlib
-matplotlib.use('Agg')
+#matplotlib.use('Agg')
 
 from utils.timer import Timer
 import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 import scipy.io as sio
 import argparse
 
@@ -89,6 +90,9 @@ def vis_detections(ax, class_name, dets, attributes, rel_argmax, rel_score, thre
 
 def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=True):
     MIN_BOXES, MAX_BOXES=10,20
+    NMS_THRESH = 0.05
+    CONF_THRESH = 0.1
+    ATTR_THRESH = 0.1
     im = cv2.imread(im_file)
 #    import ipdb; ipdb.set_trace()
     scores, boxes, attr_scores, rel_scores = im_detect(net, im)
@@ -138,7 +142,7 @@ def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=Tr
                 rel_argmax_c = None
                 rel_score_c = None
             vis_detections(ax, cls, dets, attributes, rel_argmax_c, rel_score_c, thresh=CONF_THRESH)
-        plt.savefig('data/demo/'+im_file.split('/')[-1].replace(".jpg", "_demo.jpg"))
+        plt.savefig('./'+im_file.split('/')[-1].replace(".jpg", "_demo.png"))
 
 
     return {
@@ -153,8 +157,8 @@ def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=Tr
 def main():
     caffe.set_mode_gpu()
     caffe.set_device(0)
-    prototxt = '../../visdial/data/models/faster_rcnn/test.prototxt' #Set to location of test/deploy prototxt
-    weights = '../../visdial/data/models/faster_rcnn/resnet101_faster_rcnn_final.caffemodel' #Set to location of caffemodel
+    prototxt = '/home/youssef/visdial/data/models/faster_rcnn/test.prototxt' #Set to location of test/deploy prototxt
+    weights = '/home/youssef/visdial/data/models/faster_rcnn/resnet101_faster_rcnn_final.caffemodel' #Set to location of caffemodel
     image_file = '/media/data_cifs/image_datasets/coco_2014/coco_images/train2014/COCO_train2014_000000000025.jpg' #Set to path of image file
     net = caffe.Net(prototxt, caffe.TEST, weights=weights)
     image_id = 0
