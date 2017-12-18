@@ -8,10 +8,11 @@ import _init_paths
 from fast_rcnn.config import cfg, cfg_from_file
 from fast_rcnn.test import im_detect,_get_blobs
 from fast_rcnn.nms_wrapper import nms
-
-
+import glob
+from tqdm import tqdm
 import matplotlib
 #matplotlib.use('Agg')
+import h5py
 
 from utils.timer import Timer
 import matplotlib.pyplot as plt
@@ -32,7 +33,7 @@ import random
 import json
 
 FIELDNAMES = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'features']
-
+eps = 1e-8
 CLASSES = ['__background__']
 with open(os.path.join(cfg.DATA_DIR, 'vg/objects_vocab.txt')) as f:
   for object in f.readlines():
@@ -88,8 +89,8 @@ def vis_detections(ax, class_name, dets, attributes, rel_argmax, rel_score, thre
     plt.tight_layout()
     plt.draw()
 
-def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=True):
-    MIN_BOXES, MAX_BOXES=10,20
+def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=False):
+    MIN_BOXES, MAX_BOXES=36,36
     NMS_THRESH = 0.05
     CONF_THRESH = 0.1
     ATTR_THRESH = 0.1
@@ -111,13 +112,23 @@ def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=Tr
         dets = np.hstack((cls_boxes, cls_scores[:, np.newaxis])).astype(np.float32)
         keep = np.array(nms(dets, cfg.TEST.NMS))
         max_conf[keep] = np.where(cls_scores[keep] > max_conf[keep], cls_scores[keep], max_conf[keep])
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     keep_boxes = np.where(max_conf >= conf_thresh)[0]
     if len(keep_boxes) < MIN_BOXES:
         keep_boxes = np.argsort(max_conf)[::-1][:MIN_BOXES]
     elif len(keep_boxes) > MAX_BOXES:
         keep_boxes = np.argsort(max_conf)[::-1][:MAX_BOXES]
 
+    #Normalize scores of best detections, sum their features to
+    #obtain bottom-up attention features of im
+
+    best_scores = max_conf[keep_boxes]
+    best_feats = pool5[keep_boxes]
+    scores_norm = np.expand_dims(np.exp(best_scores)/np.sum(np.exp(best_scores))+eps,axis=1)
+    cumulative_feats = scores_norm.T.dot(best_feats)
+    sum_feats = np.sum(best_feats,axis=0)
+    #print np.mean(cumulative_feats),np.mean(best_feats)
+    #import ipdb; ipdb.set_trace()
     if visualize:
         im = im[:, :, (2, 1, 0)]
         fig, ax = plt.subplots(figsize=(12, 12))
@@ -151,7 +162,9 @@ def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2, visualize=Tr
         'image_w': np.size(im, 1),
         'num_boxes' : len(keep_boxes),
         'boxes': base64.b64encode(cls_boxes[keep_boxes]),
-        'features': base64.b64encode(pool5[keep_boxes])
+        'features': base64.b64encode(pool5[keep_boxes]),
+        'cumulative_feats':cumulative_feats,
+        'sum_feats':sum_feats
     }
 
 def main():
@@ -159,11 +172,26 @@ def main():
     caffe.set_device(0)
     prototxt = '/home/youssef/visdial/data/models/faster_rcnn/test.prototxt' #Set to location of test/deploy prototxt
     weights = '/home/youssef/visdial/data/models/faster_rcnn/resnet101_faster_rcnn_final.caffemodel' #Set to location of caffemodel
-    image_file = '/media/data_cifs/image_datasets/coco_2014/coco_images/train2014/COCO_train2014_000000000025.jpg' #Set to path of image file
+    image_root = '/media/data_cifs/image_datasets/coco_2014/coco_images'
+    #image_file = '/media/data_cifs/image_datasets/coco_2014/coco_images/train2014/COCO_train2014_000000000025.jpg' #Set to path of image file
     net = caffe.Net(prototxt, caffe.TEST, weights=weights)
     image_id = 0
-    detections = get_detections_from_im(net,image_file,image_id)
-    import ipdb; ipdb.set_trace()
-
+    cumulative_feats = np.zeros((1,2048))
+    sum_feats = np.zeros((1,2048))
+    visdial_data = json.load(open('/home/youssef/visdial/data/visdial_params.json'))
+    train_ids = visdial_data['unique_img_train']
+    for i in tqdm(range(len(train_ids)),desc="Extracting Faster-RCNN features on COCO..."):
+        im = '%s/train2014/COCO_train2014_%012d.jpg'%(image_root,train_ids[i])
+        detections = get_detections_from_im(net,im,image_id+i)
+        #import ipdb; ipdb.set_trace()
+        cumulative_feats = np.vstack([cumulative_feats,detections['cumulative_feats']])
+        sum_feats = np.vstack([sum_feats,detections['sum_feats']])
+    cumulative_feats, sum_feats = cumulative_feats[1:], sum_feats[1:]
+    cumulative_h5 = h5py.File('data_cumulative_train.h5', 'w')
+    sum_h5 = h5py.File('data_sum_train.h5', 'w')
+    cumulative_h5.create_dataset('/images_train',data=cumulative_feats)
+    sum_h5.create_dataset('/images_train',data=sum_feats)
+    cumulative_h5.close()
+    sum_h5.close()
 if __name__ == '__main__':
     main()
